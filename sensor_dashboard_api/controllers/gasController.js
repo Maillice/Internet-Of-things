@@ -1,101 +1,133 @@
+// controllers/gasController.js
 const { Client } = require('pg');
 
-const client = new Client({
-  user: process.env.PGUSER,
-  host: process.env.PGHOST,
-  database: process.env.PGDATABASE,
-  password: process.env.PGPASSWORD,
-  port: Number(process.env.PGPORT),
-  ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : false,
-});
+class GasController {
+  constructor(client) {
+    this.client = client;
+  }
 
-client.connect()
-  .then(() => console.log('✅ Connecté à PostgreSQL (Gas)'))
-  .catch(err => console.error('❌ Erreur connexion DB (Gas):', err));
-
-module.exports = {
-  getAll: async () => {
+  async getAll() {
     try {
       console.log(`[${new Date().toISOString()}] Début getAll gas`);
-      const result = await client.query('SELECT * FROM gas_levels ORDER BY timestamp DESC');
-      console.log(`[${new Date().toISOString()}] Résultat getAll gas:`, result.rows);
+      const result = await this.client.query(
+        'SELECT * FROM gas_levels ORDER BY timestamp DESC'
+      );
+      console.log(`[${new Date().toISOString()}] ${result.rows.length} résultats trouvés`);
       return result.rows;
     } catch (err) {
       console.error(`[${new Date().toISOString()}] Erreur getAll gas:`, err);
-      throw new Error('Erreur lors de la récupération des niveaux de gaz: ' + err.message);
+      throw this._createError('récupération', err);
     }
-  },
+  }
 
-  getById: async (id) => {
+  async getById(id) {
     try {
-      console.log(`[${new Date().toISOString()}] Début getById gas:`, id);
-      const result = await client.query('SELECT * FROM gas_levels WHERE id = $1', [id]);
-      if (result.rows.length === 0) throw new Error('Niveau de gaz non trouvé');
-      console.log(`[${new Date().toISOString()}] Résultat getById gas:`, result.rows[0]);
+      console.log(`[${new Date().toISOString()}] Recherche gas ID: ${id}`);
+      const result = await this.client.query(
+        'SELECT * FROM gas_levels WHERE id = $1', 
+        [id]
+      );
+      
+      if (result.rows.length === 0) {
+        throw new Error('Niveau de gaz non trouvé');
+      }
+      
       return result.rows[0];
     } catch (err) {
-      console.error(`[${new Date().toISOString()}] Erreur getById gas:`, err);
-      throw err;
+      console.error(`[${new Date().toISOString()}] Erreur getById:`, err);
+      throw this._createError('recherche', err);
     }
-  },
+  }
 
-  create: async ({ sensor_id, value, alert_status }) => {
-    console.log(`[${new Date().toISOString()}] Début create gas:`, { sensor_id, value, alert_status });
+  async create(data) {
+    const { sensor_id, value, alert_status } = data;
     try {
+      console.log(`[${new Date().toISOString()}] Création gas:`, data);
       const query = `
         INSERT INTO gas_levels (sensor_id, value, alert_status)
         VALUES ($1, $2, $3)
         RETURNING *
       `;
-      const values = [sensor_id, value, alert_status];
-      console.log(`[${new Date().toISOString()}] Exécution requête gas:`, query, values);
-      const result = await client.query(query, values);
-      console.log(`[${new Date().toISOString()}] Résultat create gas:`, result.rows[0]);
+      const result = await this.client.query(query, [
+        sensor_id, 
+        value, 
+        alert_status
+      ]);
       return result.rows[0];
     } catch (err) {
-      console.error(`[${new Date().toISOString()}] Erreur create gas:`, err);
-      throw new Error('Erreur lors de l\'ajout du niveau de gaz: ' + err.message);
+      console.error(`[${new Date().toISOString()}] Erreur création:`, err);
+      throw this._createError('création', err);
     }
-  },
-
- update: async (id, { sensor_id, value, alert_status }) => {
-  console.log(`[${new Date().toISOString()}] Début update gas:`, id, { sensor_id, value, alert_status });
-  try {
-    const query = `
-      UPDATE gas_levels 
-      SET sensor_id=$1, value=$2, alert_status=$3
-      WHERE id=$4 
-      RETURNING *
-    `;
-    const values = [sensor_id, value, alert_status, id];
-    console.log(`[${new Date().toISOString()}] Exécution requête gas:`, query, values);
-    const result = await client.query(query, values);
-    if (result.rows.length === 0) throw new Error('Niveau de gaz non trouvé');
-    console.log(`[${new Date().toISOString()}] Résultat update gas:`, result.rows[0]);
-    return result.rows[0];
-  } catch (err) {
-    console.error(`[${new Date().toISOString()}] Erreur update gas:`, err);
-    throw new Error('Erreur lors de la mise à jour du niveau de gaz: ' + err.message);
   }
-},
 
-  delete: async (id) => {
-    console.log(`[${new Date().toISOString()}] Début delete gas:`, id);
+  async update(id, data) {
+    const { sensor_id, value, alert_status } = data;
     try {
+      console.log(`[${new Date().toISOString()}] Mise à jour gas ID ${id}:`, data);
       const query = `
-        DELETE FROM gas_levels 
-        WHERE id = $1 
+        UPDATE gas_levels 
+        SET sensor_id = $1, value = $2, alert_status = $3
+        WHERE id = $4
         RETURNING *
       `;
-      const values = [id];
-      console.log(`[${new Date().toISOString()}] Exécution requête gas:`, query, values);
-      const result = await client.query(query, values);
-      if (result.rows.length === 0) throw new Error('Niveau de gaz non trouvé');
-      console.log(`[${new Date().toISOString()}] Résultat delete gas:`, result.rows[0]);
+      const result = await this.client.query(query, [
+        sensor_id,
+        value,
+        alert_status,
+        id
+      ]);
+      
+      if (result.rows.length === 0) {
+        throw new Error('Niveau de gaz non trouvé');
+      }
+      
       return result.rows[0];
     } catch (err) {
-      console.error(`[${new Date().toISOString()}] Erreur delete gas:`, err);
-      throw new Error('Erreur lors de la suppression du niveau de gaz: ' + err.message);
+      console.error(`[${new Date().toISOString()}] Erreur mise à jour:`, err);
+      throw this._createError('mise à jour', err);
     }
   }
+
+  async delete(id) {
+    try {
+      console.log(`[${new Date().toISOString()}] Suppression gas ID: ${id}`);
+      const query = `
+        DELETE FROM gas_levels 
+        WHERE id = $1
+        RETURNING *
+      `;
+      const result = await this.client.query(query, [id]);
+      
+      if (result.rows.length === 0) {
+        console.warn(`[${new Date().toISOString()}] Aucun gas trouvé pour suppression: ${id}`);
+        return null;
+      }
+      
+      return result.rows[0];
+    } catch (err) {
+      console.error(`[${new Date().toISOString()}] Erreur suppression:`, err);
+      throw this._createError('suppression', err);
+    }
+  }
+
+  _createError(action, originalError) {
+    const errorMap = {
+      '23505': 'Un enregistrement avec ces valeurs existe déjà',
+      '22P02': 'Format de données invalide',
+      default: `Erreur lors de la ${action} du niveau de gaz`
+    };
+
+    const code = originalError.code || 'default';
+    const message = errorMap[code] || errorMap.default;
+    
+    return new Error(`${message} (${originalError.message})`);
+  }
+}
+
+// Version alternative pour l'export si vous préférez une fonction factory
+module.exports = (client) => {
+  return new GasController(client);
 };
+
+// Ou export direct si vous instanciez ailleurs
+// module.exports = GasController;

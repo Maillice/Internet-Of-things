@@ -1,7 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const rfidController = require('../controllers/rfidController');
+const RfidController = require('../controllers/rfidController');
 const { validateRfidData, validateIdParam } = require('../middlewares/validators');
+
+// Instanciation du contrôleur avec un client PostgreSQL (à configurer dans votre app principale)
+const client = require('../config/db'); // Exemple : importez votre client PG ici
+const rfidController = RfidController(client);
 
 /**
  * @swagger
@@ -14,7 +18,7 @@ const { validateRfidData, validateIdParam } = require('../middlewares/validators
  * @swagger
  * /rfid_logs:
  *   get:
- *     summary: Liste tous les logs RFID
+ *     summary: Liste tous les logs RFID avec pagination
  *     tags: [RFID]
  *     parameters:
  *       - in: query
@@ -30,19 +34,21 @@ const { validateRfidData, validateIdParam } = require('../middlewares/validators
  *     responses:
  *       200:
  *         description: Liste des logs RFID
+ *       500:
+ *         description: Erreur serveur
  */
 router.get('/', async (req, res, next) => {
   try {
-    const { page = 1, limit = 10, ...filters } = req.query;
-    const result = await rfidController.getAll({
-      page: parseInt(page),
-      limit: Math.min(parseInt(limit), 100),
-      filters
-    });
-
+    const { page = 1, limit = 10 } = req.query;
+    const data = await rfidController.getAll();
+    const start = (page - 1) * limit;
+    const paginatedData = data.slice(start, start + limit);
     res.status(200).json({
       status: 'success',
-      ...result
+      page: parseInt(page),
+      limit: Math.min(parseInt(limit), 100),
+      total: data.length,
+      data: paginatedData
     });
   } catch (err) {
     next(err);
@@ -66,16 +72,12 @@ router.get('/', async (req, res, next) => {
  *         description: Log RFID trouvé
  *       404:
  *         description: Log RFID non trouvé
+ *       500:
+ *         description: Erreur serveur
  */
 router.get('/:id', validateIdParam, async (req, res, next) => {
   try {
     const data = await rfidController.getById(req.params.id);
-    if (!data) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'Entrée RFID non trouvée'
-      });
-    }
     res.status(200).json({
       status: 'success',
       data
@@ -96,7 +98,17 @@ router.get('/:id', validateIdParam, async (req, res, next) => {
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/RfidLog'
+ *             type: object
+ *             properties:
+ *               card_id:
+ *                 type: string
+ *               reader_id:
+ *                 type: string
+ *               status:
+ *                 type: string
+ *                 enum: [granted, denied, pending]
+ *               location:
+ *                 type: string
  *     responses:
  *       201:
  *         description: Log RFID créé
@@ -104,6 +116,8 @@ router.get('/:id', validateIdParam, async (req, res, next) => {
  *         description: Données invalides
  *       409:
  *         description: Conflit (duplicata)
+ *       500:
+ *         description: Erreur serveur
  */
 router.post('/', validateRfidData, async (req, res, next) => {
   try {
@@ -114,11 +128,11 @@ router.post('/', validateRfidData, async (req, res, next) => {
       message: 'Entrée RFID créée avec succès'
     });
   } catch (err) {
-    if (err.code === '23505') { // Code d'erreur PostgreSQL pour les doublons
+    if (err.code === '23505') {
       return res.status(409).json({
         status: 'error',
         message: 'Ce tag RFID existe déjà',
-        details: err.detail
+        details: err.message
       });
     }
     next(err);
@@ -142,7 +156,17 @@ router.post('/', validateRfidData, async (req, res, next) => {
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/RfidLog'
+ *             type: object
+ *             properties:
+ *               card_id:
+ *                 type: string
+ *               reader_id:
+ *                 type: string
+ *               status:
+ *                 type: string
+ *                 enum: [granted, denied, pending]
+ *               location:
+ *                 type: string
  *     responses:
  *       200:
  *         description: Log RFID mis à jour
@@ -150,21 +174,20 @@ router.post('/', validateRfidData, async (req, res, next) => {
  *         description: Données invalides
  *       404:
  *         description: Log RFID non trouvé
+ *       409:
+ *         description: Conflit de données
+ *       500:
+ *         description: Erreur serveur
  */
 router.put('/:id', validateIdParam, validateRfidData, async (req, res, next) => {
   try {
-    const updatedRecord = await rfidController.update(
-      req.params.id,
-      req.body
-    );
-    
+    const updatedRecord = await rfidController.update(req.params.id, req.body);
     if (!updatedRecord) {
       return res.status(404).json({
         status: 'fail',
         message: 'Entrée RFID non trouvée'
       });
     }
-    
     res.status(200).json({
       status: 'success',
       data: updatedRecord,
@@ -175,7 +198,7 @@ router.put('/:id', validateIdParam, validateRfidData, async (req, res, next) => 
       return res.status(409).json({
         status: 'error',
         message: 'Conflit de données',
-        details: err.detail
+        details: err.message
       });
     }
     next(err);
@@ -199,6 +222,8 @@ router.put('/:id', validateIdParam, validateRfidData, async (req, res, next) => 
  *         description: Log RFID supprimé
  *       404:
  *         description: Log RFID non trouvé
+ *       500:
+ *         description: Erreur serveur
  */
 router.delete('/:id', validateIdParam, async (req, res, next) => {
   try {
@@ -209,10 +234,20 @@ router.delete('/:id', validateIdParam, async (req, res, next) => {
         message: 'Entrée RFID non trouvée'
       });
     }
-    res.status(204).end();
+    res.status(204).json(); // Utilisation de 204 avec réponse vide
   } catch (err) {
     next(err);
   }
+});
+
+// Middleware global d'erreur
+router.use((err, req, res, next) => {
+  console.error(`[${new Date().toISOString()}] Erreur routeur RFID:`, err);
+  const status = err.message.includes('non trouvée') ? 404 : 500;
+  res.status(status).json({
+    status: 'error',
+    message: err.message
+  });
 });
 
 module.exports = router;

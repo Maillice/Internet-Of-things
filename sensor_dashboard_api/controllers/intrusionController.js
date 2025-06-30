@@ -1,107 +1,136 @@
 const { Client } = require('pg');
 
-const client = new Client({
-  user: process.env.PGUSER,
-  host: process.env.PGHOST,
-  database: process.env.PGDATABASE,
-  password: process.env.PGPASSWORD,
-  port: Number(process.env.PGPORT),
-  ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : false,
-});
+class IntrusionController {
+  constructor(client) {
+    this.client = client;
+  }
 
-client.connect()
-  .then(() => console.log('✅ Connecté à PostgreSQL (Intrusion)'))
-  .catch(err => console.error('❌ Erreur connexion DB (Intrusion):', err));
+  // Convertit les valeurs de détection en booléen
+  _parseDetection(detection) {
+    const detectionMap = {
+      'detected': true,
+      'cleared': false,
+      'true': true,
+      'false': false,
+      true: true,
+      false: false
+    };
 
-module.exports = {
-  getAll: async () => {
+    if (detection in detectionMap) {
+      return detectionMap[detection];
+    }
+    throw new Error("Valeur de détection invalide. Utilisez 'detected'/'cleared' ou true/false");
+  }
+
+  // Gestion centralisée des erreurs
+  _handleError(action, error) {
+    const errorMessages = {
+      '23505': 'Un log identique existe déjà',
+      '22P02': 'Format de données invalide',
+      'default': `Erreur lors de ${action} le log d'intrusion`
+    };
+
+    console.error(`[${new Date().toISOString()}] Erreur ${action}:`, error);
+    const message = errorMessages[error.code] || errorMessages.default;
+    throw new Error(`${message} (${error.message})`);
+  }
+
+  async getAll() {
     try {
-      console.log(`[${new Date().toISOString()}] Début getAll intrusion`);
-      const result = await client.query('SELECT * FROM intrusion_logs ORDER BY timestamp DESC');
-      console.log(`[${new Date().toISOString()}] Résultat getAll intrusion:`, result.rows);
+      console.log(`[${new Date().toISOString()}] Récupération de tous les logs d'intrusion`);
+      const result = await this.client.query(
+        'SELECT * FROM intrusion_logs ORDER BY timestamp DESC'
+      );
       return result.rows;
     } catch (err) {
-      console.error(`[${new Date().toISOString()}] Erreur getAll intrusion:`, err);
-      throw new Error('Erreur lors de la récupération des logs d\'intrusion');
-    }
-  },
-
-  getById: async (id) => {
-    try {
-      console.log(`[${new Date().toISOString()}] Début getById intrusion:`, id);
-      const result = await client.query('SELECT * FROM intrusion_logs WHERE id = $1', [id]);
-      if (result.rows.length === 0) throw new Error('Log d\'intrusion non trouvé');
-      console.log(`[${new Date().toISOString()}] Résultat getById intrusion:`, result.rows[0]);
-      return result.rows[0];
-    } catch (err) {
-      console.error(`[${new Date().toISOString()}] Erreur getById intrusion:`, err);
-      throw err;
-    }
-  },
-
-  create: async ({ sensor_id, detection, alert_status }) => {
-    console.log(`[${new Date().toISOString()}] Début create intrusion:`, { sensor_id, detection, alert_status });
-    try {
-      // Convertir detection en booléen
-      const detectionBoolean = detection === 'detected' ? true : detection === 'cleared' ? false : null;
-      if (detectionBoolean === null) {
-        throw new Error('Valeur de detection invalide');
-      }
-      const query = `
-        INSERT INTO intrusion_logs (sensor_id, detection, alert_status)
-        VALUES ($1, $2, $3)
-        RETURNING *
-      `;
-      const values = [sensor_id, detectionBoolean, alert_status];
-      console.log(`[${new Date().toISOString()}] Exécution requête intrusion:`, query, values);
-      const result = await client.query(query, values);
-      console.log(`[${new Date().toISOString()}] Résultat create intrusion:`, result.rows[0]);
-      return result.rows[0];
-    } catch (err) {
-      console.error(`[${new Date().toISOString()}] Erreur create intrusion:`, err);
-      throw new Error('Erreur lors de l\'ajout du log d\'intrusion: ' + err.message);
-    }
-  },
-
-  update: async (id, { sensor_id, detection, alert_status }) => {
-    console.log(`[${new Date().toISOString()}] Début update intrusion:`, id, { sensor_id, detection, alert_status });
-    try {
-      // Convertir detection en booléen
-      const detectionBoolean = detection === 'detected' ? true : detection === 'cleared' ? false : null;
-      if (detectionBoolean === null) {
-        throw new Error('Valeur de detection invalide');
-      }
-      const query = `
-        UPDATE intrusion_logs 
-        SET sensor_id=$1, detection=$2, alert_status=$3
-        WHERE id=$4 
-        RETURNING *
-      `;
-      const values = [sensor_id, detectionBoolean, alert_status, id];
-      console.log(`[${new Date().toISOString()}] Exécution requête intrusion:`, query, values);
-      const result = await client.query(query, values);
-      if (result.rows.length === 0) throw new Error('Log d\'intrusion non trouvé');
-      console.log(`[${new Date().toISOString()}] Résultat update intrusion:`, result.rows[0]);
-      return result.rows[0];
-    } catch (err) {
-      console.error(`[${new Date().toISOString()}] Erreur update intrusion:`, err);
-      throw err;
-    }
-  },
-
-  delete: async (id) => {
-    console.log(`[${new Date().toISOString()}] Début delete intrusion:`, id);
-    try {
-      const result = await client.query(
-        'DELETE FROM intrusion_logs WHERE id = $1 RETURNING *',
-        [id]
-      );
-      if (result.rows.length === 0) throw new Error('Log d\'intrusion non trouvé');
-      console.log(`[${new Date().toISOString()}] Résultat delete intrusion:`, result.rows[0]);
-      return result.rows[0];
-    } catch (err) {
-      console.error(`[${new Date().toISOString()}] Erreur delete intrusion:`, err);
-      throw err;
+      this._handleError('la récupération', err);
     }
   }
-};
+
+  async getById(id) {
+    try {
+      console.log(`[${new Date().toISOString()}] Recherche intrusion ID: ${id}`);
+      const result = await this.client.query(
+        'SELECT * FROM intrusion_logs WHERE id = $1', 
+        [id]
+      );
+      
+      if (result.rows.length === 0) {
+        throw new Error('Log d\'intrusion non trouvé');
+      }
+      
+      return result.rows[0];
+    } catch (err) {
+      this._handleError('la recherche', err);
+    }
+  }
+
+  async create(data) {
+    const { sensor_id, detection, alert_status } = data;
+    
+    try {
+      console.log(`[${new Date().toISOString()}] Création log intrusion:`, data);
+      const detectionBoolean = this._parseDetection(detection);
+      
+      const result = await this.client.query(
+        `INSERT INTO intrusion_logs 
+         (sensor_id, detection, alert_status) 
+         VALUES ($1, $2, $3) 
+         RETURNING *`,
+        [sensor_id, detectionBoolean, alert_status]
+      );
+      
+      return result.rows[0];
+    } catch (err) {
+      this._handleError('la création', err);
+    }
+  }
+
+  async update(id, data) {
+    const { sensor_id, detection, alert_status } = data;
+    
+    try {
+      console.log(`[${new Date().toISOString()}] Mise à jour intrusion ID ${id}:`, data);
+      const detectionBoolean = this._parseDetection(detection);
+      
+      const result = await this.client.query(
+        `UPDATE intrusion_logs 
+         SET sensor_id = $1, detection = $2, alert_status = $3 
+         WHERE id = $4 
+         RETURNING *`,
+        [sensor_id, detectionBoolean, alert_status, id]
+      );
+      
+      if (result.rows.length === 0) {
+        throw new Error('Log d\'intrusion non trouvé');
+      }
+      
+      return result.rows[0];
+    } catch (err) {
+      this._handleError('la mise à jour', err);
+    }
+  }
+
+  async delete(id) {
+    try {
+      console.log(`[${new Date().toISOString()}] Suppression intrusion ID: ${id}`);
+      const result = await this.client.query(
+        `DELETE FROM intrusion_logs 
+         WHERE id = $1 
+         RETURNING *`,
+        [id]
+      );
+      
+      if (result.rows.length === 0) {
+        console.warn(`[${new Date().toISOString()}] Aucun log trouvé pour suppression: ${id}`);
+        return null;
+      }
+      
+      return result.rows[0];
+    } catch (err) {
+      this._handleError('la suppression', err);
+    }
+  }
+}
+
+module.exports = (client) => new IntrusionController(client);

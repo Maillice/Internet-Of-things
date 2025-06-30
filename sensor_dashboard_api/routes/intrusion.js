@@ -1,7 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const intrusionController = require('../controllers/intrusionController');
+const IntrusionController = require('../controllers/intrusionController');
 const { validateIntrusionData, validateIdParam } = require('../middlewares/validators');
+
+// Instanciation du contrôleur avec un client PostgreSQL (à configurer dans votre app principale)
+const client = require('../config/db'); // Exemple : importez votre client PG ici
+const intrusionController = IntrusionController(client);
 
 // GET all intrusion logs
 router.get('/', async (req, res, next) => {
@@ -13,12 +17,11 @@ router.get('/', async (req, res, next) => {
       data
     });
   } catch (err) {
-    console.error(`[${new Date().toISOString()}] Erreur GET /intrusion_logs:`, err);
     next(err);
   }
 });
 
-// GET specific intrusion log
+// GET specific intrusion log by ID
 router.get('/:id', validateIdParam, async (req, res, next) => {
   try {
     const data = await intrusionController.getById(req.params.id);
@@ -27,7 +30,6 @@ router.get('/:id', validateIdParam, async (req, res, next) => {
       data
     });
   } catch (err) {
-    console.error(`[${new Date().toISOString()}] Erreur GET /intrusion_logs/:id:`, err);
     next(err);
   }
 });
@@ -35,7 +37,6 @@ router.get('/:id', validateIdParam, async (req, res, next) => {
 // POST new intrusion log
 router.post('/', validateIntrusionData, async (req, res, next) => {
   try {
-    console.log(`[${new Date().toISOString()}] Requête POST /intrusion_logs reçue:`, req.body);
     const newRecord = await intrusionController.create(req.body);
     res.status(201).json({
       status: 'success',
@@ -43,15 +44,13 @@ router.post('/', validateIntrusionData, async (req, res, next) => {
       message: 'Entrée intrusion créée avec succès'
     });
   } catch (err) {
-    console.error(`[${new Date().toISOString()}] Erreur POST /intrusion_logs:`, err);
     next(err);
   }
 });
 
-// UPDATE intrusion log
+// PUT update intrusion log by ID
 router.put('/:id', validateIdParam, validateIntrusionData, async (req, res, next) => {
   try {
-    console.log(`[${new Date().toISOString()}] Requête PUT /intrusion_logs/:id reçue:`, req.params.id, req.body);
     const updatedRecord = await intrusionController.update(req.params.id, req.body);
     res.status(200).json({
       status: 'success',
@@ -59,25 +58,39 @@ router.put('/:id', validateIdParam, validateIntrusionData, async (req, res, next
       message: 'Entrée intrusion mise à jour avec succès'
     });
   } catch (err) {
-    console.error(`[${new Date().toISOString()}] Erreur PUT /intrusion_logs/:id:`, err);
     next(err);
   }
 });
 
-// DELETE intrusion log
+// DELETE intrusion log by ID
 router.delete('/:id', validateIdParam, async (req, res, next) => {
   try {
-    console.log(`[${new Date().toISOString()}] Requête DELETE /intrusion_logs/:id reçue:`, req.params.id);
-    const result = await intrusionController.delete(req.params.id);
-    res.status(204).json({
+    const deletedRecord = await intrusionController.delete(req.params.id);
+    if (!deletedRecord) {
+      return res.status(404).json({
+        status: 'fail',
+        message: `Aucun log d'intrusion trouvé avec l'ID ${req.params.id}`,
+        data: null
+      });
+    }
+    res.status(200).json({ // Utilisation de 200 avec réponse au lieu de 204
       status: 'success',
-      data: null,
-      message: 'Entrée intrusion supprimée avec succès'
+      data: deletedRecord,
+      message: `Log d'intrusion ID ${req.params.id} supprimé avec succès`
     });
   } catch (err) {
-    console.error(`[${new Date().toISOString()}] Erreur DELETE /intrusion_logs/:id:`, err);
     next(err);
   }
+});
+
+// Middleware global d'erreur
+router.use((err, req, res, next) => {
+  console.error(`[${new Date().toISOString()}] Erreur routeur intrusion:`, err);
+  const status = err.message.includes('non trouvé') ? 404 : 500;
+  res.status(status).json({
+    status: 'error',
+    message: err.message
+  });
 });
 
 module.exports = router;
