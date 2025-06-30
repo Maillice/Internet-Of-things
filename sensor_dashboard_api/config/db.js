@@ -1,34 +1,72 @@
-const { Pool } = require('pg');
+const { Client } = require('pg');
+require('dotenv').config();
 
+// Configuration améliorée avec gestion d'erreur renforcée
 const dbConfig = {
-  user: process.env.PGUSER,
-  host: process.env.PGHOST,
-  database: process.env.PGDATABASE,
-  password: process.env.PGPASSWORD,
-  port: Number(process.env.PGPORT),
-  ssl: process.env.PGSSL === 'true' ? { 
-    rejectUnauthorized: false,
-    ca: process.env.PGSSLCERT // Ajoutez ceci si nécessaire
-  } : false,
-  connectionTimeoutMillis: 15000, // Augmentez à 15 secondes
-  idleTimeoutMillis: 30000,
-  max: 3 // Réduisez le nombre max de connexions
+  connectionString: process.env.DATABASE_URL || `postgresql://${process.env.PGUSER}:${process.env.PGPASSWORD}@${process.env.PGHOST}:${process.env.PGPORT}/${process.env.PGDATABASE}`,
+  ssl: {
+    rejectUnauthorized: false,  // Obligatoire pour Render
+    require: true              // Force l'utilisation de SSL
+  },
+  connectionTimeoutMillis: 30000,  // Timeout augmenté à 30s
+  query_timeout: 20000,            // Timeout pour les requêtes
+  statement_timeout: 20000         // Timeout pour les statements
 };
 
-const pool = new Pool(dbConfig);
+const client = new Client(dbConfig);
 
-// Test de connexion amélioré
-pool.query('SELECT NOW()')
-  .then(res => {
-    console.log('✅ Connecté à PostgreSQL avec succès. Heure du serveur:', res.rows[0].now);
-  })
-  .catch(err => {
-    console.error('❌ Échec de la connexion PostgreSQL:', err);
-    process.exit(1); // Quitte en cas d'échec
-  });
+// Mécanisme de connexion avec reconnexion automatique
+async function connectDB(maxRetries = 3, retryDelay = 5000) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`Tentative de connexion ${attempt}/${maxRetries}...`);
+      await client.connect();
+      
+      // Vérification active de la connexion
+      const res = await client.query('SELECT NOW() AS db_time');
+      console.log('✅ Connecté à PostgreSQL avec succès');
+      console.log(`🕒 Heure du serveur DB: ${res.rows[0].db_time}`);
+      
+      // Vérification des tables
+      const tables = await client.query(`
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public'
+      `);
+      console.log('📊 Tables disponibles:', tables.rows.map(r => r.table_name));
+      
+      return client;
+    } catch (err) {
+      console.error(`❌ Échec de la tentative ${attempt}:`, err.message);
+      
+      if (attempt < maxRetries) {
+        console.log(`⏳ Nouvelle tentative dans ${retryDelay/1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        
+        // Réinitialisation du client si la connexion a échoué
+        if (client._connected) {
+          await client.end();
+        }
+        client = new Client(dbConfig); // Recréation du client
+      } else {
+        throw new Error(`Échec de connexion après ${maxRetries} tentatives: ${err.message}`);
+      }
+    }
+  }
+}
 
-// Logging des événements du pool
-pool.on('connect', () => console.log('👉 Nouvelle connexion établie'));
-pool.on('error', err => console.error('💥 Erreur du pool:', err));
+// Gestion des erreurs de connexion inattendues
+client.on('error', (err) => {
+  console.error('💥 Erreur inattendue du client PostgreSQL:', err);
+});
 
-module.exports = pool;
+// Export avec vérification de connexion
+module.exports = {
+  connectDB,
+  getClient: () => {
+    if (!client._connected) {
+      throw new Error('Client PostgreSQL non connecté');
+    }
+    return client;
+  }
+};
