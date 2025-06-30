@@ -22,12 +22,9 @@ const dbConfig = {
   database: process.env.PGDATABASE,
   password: process.env.PGPASSWORD,
   port: process.env.PGPORT,
-  ssl: process.env.PGSSL === 'true' ? { 
-    rejectUnauthorized: false 
-  } : false,
-  connectionTimeoutMillis: 5000
+  ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : false,
+  connectionTimeoutMillis: 30000 // Augmenter à 30 secondes
 };
-
 const client = new Client(dbConfig);
 
 // Connexion à la base de données
