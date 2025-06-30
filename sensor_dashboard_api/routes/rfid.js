@@ -3,9 +3,11 @@ const router = express.Router();
 const RfidController = require('../controllers/rfidController');
 const { validateRfidData, validateIdParam } = require('../middlewares/validators');
 
-// Instanciation du contrôleur avec un client PostgreSQL (à configurer dans votre app principale)
-const client = require('../config/db'); // Exemple : importez votre client PG ici
-const rfidController = RfidController(client);
+// Utiliser le client injecté via req.dbClient (pas d'importation de config/db)
+router.use((req, res, next) => {
+  req.rfidController = RfidController(req.dbClient); // Instancier avec le client de la requête
+  next();
+});
 
 /**
  * @swagger
